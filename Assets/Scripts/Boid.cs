@@ -239,13 +239,15 @@ public class Boid : MonoBehaviour
         }
         else if (timeUntilDeparture <= -5f)
         {
-            if (neighborhood.neighbors.Count == 0)
-            {
                 int thisIndex = Spawner.boids.IndexOf(this);
                 Spawner.boids.RemoveAt(thisIndex);
+                foreach (Boid boid in neighborhood.neighbors)
+                {
+                    int boidIndex = boid.neighborhood.neighbors.IndexOf(this);
+                    boid.neighborhood.neighbors.RemoveAt(boidIndex);
+                }
                 currentSpawn.InstantiateBoid();
                 Destroy(this.gameObject);
-            }
         }
         else
         {
