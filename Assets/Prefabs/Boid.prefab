@@ -190,6 +190,7 @@ MonoBehaviour:
   dangle: 0
   rotVec2: {x: 0, y: 0, z: 0}
   myangle: 0
+  timeUntilDeparture: 15
 --- !u!114 &8365442421217161191
 MonoBehaviour:
   m_ObjectHideFlags: 0

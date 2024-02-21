@@ -19,10 +19,14 @@ public class Boid : MonoBehaviour
     public Vector3 rotVec2;
     public float myangle;
     float rotationRate = 0.50f;
+    public float timeUntilDeparture = 15f;
+    public Spawner currentSpawn;
 
     // Use this for initialization
     void Awake()
     {
+        timeUntilDeparture = Random.Range(15f, 120f);
+        currentSpawn = GameObject.FindGameObjectWithTag("MainCamera").GetComponent<Spawner>();
         neighborhood = GetComponent<Neighborhood>();
         rigid = GetComponent<Rigidbody>();
         myCollider = GetComponent<SphereCollider>();
@@ -100,135 +104,187 @@ public class Boid : MonoBehaviour
     //FixedUpdate is called one per physics update (i.e. 50x/second)
     private void FixedUpdate()
     {
-        Vector3 vel = rigid.velocity;
-        Spawner spn = Spawner.S;
-
-        //Collision Avoidance - avoid neigbors who are too close
-        Vector3 velAvoid = Vector3.zero;
-        Vector3 tooClosePos = neighborhood.avgClosePos;
-
-        //Collision Avoidance - avoid GameObjects that are too close
-        Vector3 velAvoidGO = Vector3.zero;
-        Vector3 tooCloseGO = neighborhood.ClosePosObstacles;
-
-        // If the response is Vecator3.zero, then no need to react
-        if (tooClosePos != Vector3.zero)
+        if (timeUntilDeparture > 0)
         {
-            velAvoid = pos - tooClosePos;
-            velAvoid.Normalize();
-            velAvoid *= spn.velocity;
+            timeUntilDeparture -= Time.deltaTime;
+            Vector3 vel = rigid.velocity;
+            Spawner spn = Spawner.S;
+
+            //Collision Avoidance - avoid neigbors who are too close
+            Vector3 velAvoid = Vector3.zero;
+            Vector3 tooClosePos = neighborhood.avgClosePos;
+
+            //Collision Avoidance - avoid GameObjects that are too close
+            Vector3 velAvoidGO = Vector3.zero;
+            Vector3 tooCloseGO = neighborhood.ClosePosObstacles;
+
+            // If the response is Vecator3.zero, then no need to react
+            if (tooClosePos != Vector3.zero)
+            {
+                velAvoid = pos - tooClosePos;
+                velAvoid.Normalize();
+                velAvoid *= spn.velocity;
+            }
+            else if (tooCloseGO != Vector3.zero)
+            {
+                velAvoid = pos - tooCloseGO;
+                velAvoid.Normalize();
+                velAvoid *= spn.velocity;
+            }
+
+            //Velocity matching - Try to match velocity with neigbors
+            Vector3 velAlign = neighborhood.avgVel;
+            // Only do more if the velAlign is not Vector3.zero
+            if (velAlign != Vector3.zero)
+            {
+                // we're really interested in direction, so normalize the velocity
+                velAlign.Normalize();
+                // and then set it to the speeed we chose
+                velAlign *= spn.velocity;
+            }
+
+            //Flock centering - move towards the center of local neighbors
+            Vector3 velCenter = neighborhood.avgPos;
+            if (velCenter != Vector3.zero)
+            {
+                velCenter -= transform.position;
+                velCenter.Normalize();
+                velCenter *= spn.velocity;
+            }
+
+            //ATTRACTION - Move towards the Atttractor
+            Vector3 delta = new Vector3(Attractor.POS.x, Attractor.POS.y - 20, Attractor.POS.z) - pos;
+            //Check whether we're attracted or avoiding the Attractor
+            bool attracted = (delta.magnitude > spn.attractPushDist);
+            Vector3 velAttract = delta.normalized * spn.velocity;
+
+            //Apply all the velocities
+            float fdt = Time.fixedDeltaTime;
+            if (velAvoid != Vector3.zero)
+            {
+                vel = Vector3.Lerp(vel, velAvoid, spn.collAvoid);
+            }
+            else
+            {
+                if (velAlign != Vector3.zero)
+                {
+                    vel = Vector3.Lerp(vel, velAlign, spn.velMatching * fdt);
+                }
+                if (velCenter != Vector3.zero)
+                {
+                    vel = Vector3.Lerp(vel, velAlign, spn.flockCentering * fdt);
+                }
+                if (velAttract != Vector3.zero)
+                {
+                    if (attracted)
+                    {
+                        vel = Vector3.Lerp(vel, velAttract, spn.attractPull * fdt);
+                    }
+                    else
+                    {
+                        vel = Vector3.Lerp(vel, -velAttract, spn.attractPush * fdt);
+                    }
+                }
+            }
+
+            //set vel to the velocity set on the spawner singleton
+            vel = vel.normalized * spn.velocity;
+            // Finally assign this to the Rigidbody
+            rigid.velocity = vel;
+            //Lock in the direction of the new velocity
+            //LookAhead();
+
+
+            //Update the line pointing to the attractor with spherecollider radius
+            //Get attractor postion and draw it
+            attPos = Attractor.POS;
+            vecToAtt = attPos - pos;
+            //normalize vectoatt and multiply by collider radius to change vector length
+            vecToAtt = vecToAtt.normalized * myCollider.radius;
+            //Now the line from pos to pos + vecToAtt that is drawn with GL.Lines below
+            // is the vector from the boid pointing towards the attractor with the radius of
+            // the SphereCollider of the boid
+
+            //Now draw a line projecting vecToAtt on the plane:
+            //this is the vector from boid to attractor again
+            //this vector with the y-component equal to zero lies in the plane x,z
+            //it is plotted below between pos and attPos by setting y-components to zero
+
+            //(By the way this only works if the plane is the x,z plane!
+            //To generalize, we would compute the normal to the plane say nplane
+            // then the vectors 
+            //vecToAtt2Perp = Vector3.Dot(nplane,vecToAtt2)*nplane
+            //posPerp = Vector3.Dot(nplane,pos)*nplan
+            //are the ammounts of the pos and vecToAtt2 that are perpendicular to the plane
+            // Now subtract 
+            // vecToAtt2InPlane = vecToAtt2 - vecToAtt2Perp;
+            // posInPlane = pos - posPerp;
+            // ploting a line between these two gives the projectioin of vecToAtt2
+            // in the genearl plane)
+
+            //Now spin each boid about the vector it is moving in
+
+            //create the quaternion and rotate boid via transform.rotation
+            dangle += spinRate * Time.deltaTime;
+            brot = Quaternion.AngleAxis(dangle, vecToAtt);
+
+            //Now update, rotate and draw the vector 15 deg from the boids 'ray' to the attractor
+            float delta_myangle = rotationRate * Time.deltaTime; //update the angle step
+            myangle += delta_myangle; //add the angle step to the angle
+            myq = Quaternion.AngleAxis(myangle, vecToAtt); //update the quaternion rotation
+                                                           //Debug.Log("myq " + myq.w + " " + myq.x + " " + myq.y + " " + myq.z);
+            rotVec2 = myq * rotVec2; //rotate the vector on the 15 deg cone
+
+            LookAhead();
         }
-        else if (tooCloseGO != Vector3.zero)
+        else if (timeUntilDeparture <= -5f)
         {
-            velAvoid = pos - tooCloseGO;
-            velAvoid.Normalize();
-            velAvoid *= spn.velocity;
-        }
-
-        //Velocity matching - Try to match velocity with neigbors
-        Vector3 velAlign = neighborhood.avgVel;
-        // Only do more if the velAlign is not Vector3.zero
-        if (velAlign != Vector3.zero)
-        {
-            // we're really interested in direction, so normalize the velocity
-            velAlign.Normalize();
-            // and then set it to the speeed we chose
-            velAlign *= spn.velocity;
-        }
-
-        //Flock centering - move towards the center of local neighbors
-        Vector3 velCenter = neighborhood.avgPos;
-        if (velCenter != Vector3.zero)
-        {
-            velCenter -= transform.position;
-            velCenter.Normalize();
-            velCenter *= spn.velocity;
-        }
-
-        //ATTRACTION - Move towards the Atttractor
-        Vector3 delta = new Vector3(Attractor.POS.x, Attractor.POS.y-20, Attractor.POS.z) - pos;
-        //Check whether we're attracted or avoiding the Attractor
-        bool attracted = (delta.magnitude > spn.attractPushDist);
-        Vector3 velAttract = delta.normalized * spn.velocity;
-
-        //Apply all the velocities
-        float fdt = Time.fixedDeltaTime;
-        if (velAvoid != Vector3.zero)
-        {
-            vel = Vector3.Lerp(vel, velAvoid, spn.collAvoid);
+            if (neighborhood.neighbors.Count == 0)
+            {
+                int thisIndex = Spawner.boids.IndexOf(this);
+                Spawner.boids.RemoveAt(thisIndex);
+                currentSpawn.InstantiateBoid();
+                Destroy(this.gameObject);
+            }
         }
         else
         {
-            if (velAlign != Vector3.zero)
+            timeUntilDeparture -= Time.deltaTime;
+            Vector3 vel = rigid.velocity;
+            Spawner spn = Spawner.S;
+
+            //Collision Avoidance - avoid neigbors who are too close
+            Vector3 velAvoid = Vector3.zero;
+            Vector3 tooClosePos = neighborhood.avgClosePos;
+
+            //Collision Avoidance - avoid GameObjects that are too close
+            Vector3 velAvoidGO = Vector3.zero;
+            Vector3 tooCloseGO = neighborhood.ClosePosObstacles;
+
+            // If the response is Vecator3.zero, then no need to react
+            if (tooClosePos != Vector3.zero)
             {
-                vel = Vector3.Lerp(vel, velAlign, spn.velMatching * fdt);
+                velAvoid = pos - tooClosePos;
+                velAvoid.Normalize();
+                velAvoid *= spn.velocity;
             }
-            if (velCenter != Vector3.zero)
+            else if (tooCloseGO != Vector3.zero)
             {
-                vel = Vector3.Lerp(vel, velAlign, spn.flockCentering * fdt);
+                velAvoid = pos - tooCloseGO;
+                velAvoid.Normalize();
+                velAvoid *= spn.velocity;
             }
-            if (velAttract != Vector3.zero)
+            float fdt = Time.fixedDeltaTime;
+            if (velAvoid != Vector3.zero)
             {
-                if (attracted)
-                {
-                    vel = Vector3.Lerp(vel, velAttract, spn.attractPull * fdt);
-                }
-                else
-                {
-                    vel = Vector3.Lerp(vel, -velAttract, spn.attractPush * fdt);
-                }
+                vel = Vector3.Lerp(vel, velAvoid, spn.collAvoid);
             }
+            else
+            {
+                
+            }
+
         }
-
-        //set vel to the velocity set on the spawner singleton
-        vel = vel.normalized * spn.velocity;
-        // Finally assign this to the Rigidbody
-        rigid.velocity = vel;
-        //Lock in the direction of the new velocity
-        //LookAhead();
-
-
-        //Update the line pointing to the attractor with spherecollider radius
-        //Get attractor postion and draw it
-        attPos = Attractor.POS;
-        vecToAtt = attPos - pos;
-        //normalize vectoatt and multiply by collider radius to change vector length
-        vecToAtt = vecToAtt.normalized * myCollider.radius;
-        //Now the line from pos to pos + vecToAtt that is drawn with GL.Lines below
-        // is the vector from the boid pointing towards the attractor with the radius of
-        // the SphereCollider of the boid
-
-        //Now draw a line projecting vecToAtt on the plane:
-        //this is the vector from boid to attractor again
-        //this vector with the y-component equal to zero lies in the plane x,z
-        //it is plotted below between pos and attPos by setting y-components to zero
-
-        //(By the way this only works if the plane is the x,z plane!
-        //To generalize, we would compute the normal to the plane say nplane
-        // then the vectors 
-        //vecToAtt2Perp = Vector3.Dot(nplane,vecToAtt2)*nplane
-        //posPerp = Vector3.Dot(nplane,pos)*nplan
-        //are the ammounts of the pos and vecToAtt2 that are perpendicular to the plane
-        // Now subtract 
-        // vecToAtt2InPlane = vecToAtt2 - vecToAtt2Perp;
-        // posInPlane = pos - posPerp;
-        // ploting a line between these two gives the projectioin of vecToAtt2
-        // in the genearl plane)
-
-        //Now spin each boid about the vector it is moving in
-
-        //create the quaternion and rotate boid via transform.rotation
-        dangle += spinRate * Time.deltaTime;
-        brot = Quaternion.AngleAxis(dangle, vecToAtt);
-
-        //Now update, rotate and draw the vector 15 deg from the boids 'ray' to the attractor
-        float delta_myangle = rotationRate * Time.deltaTime; //update the angle step
-        myangle += delta_myangle; //add the angle step to the angle
-        myq = Quaternion.AngleAxis(myangle, vecToAtt); //update the quaternion rotation
-        //Debug.Log("myq " + myq.w + " " + myq.x + " " + myq.y + " " + myq.z);
-        rotVec2 = myq * rotVec2; //rotate the vector on the 15 deg cone
-
-        LookAhead();
 
     }
     
